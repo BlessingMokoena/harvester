@@ -80,6 +80,12 @@ def download_audio(url, amount, output_dir):
             "deno": {}
         },
 
+        "extractor_args": {
+    "youtubepot-bgutilhttp": {
+        "base_url": "http://127.0.0.1:4416"
+    }
+},
+
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",

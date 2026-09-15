@@ -1,5 +1,6 @@
 FROM python:3.14-slim
 
+# System dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     curl \
@@ -14,22 +15,32 @@ ENV PATH="/root/.deno/bin:${PATH}"
 
 WORKDIR /app
 
-# Install Python dependencies
+# Python dependencies
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install bgutil PO Token Provider server
+RUN git clone --depth 1 --branch 2.0.0 \
+    https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git \
+    /opt/bgutil-ytdlp-pot-provider
+
+WORKDIR /opt/bgutil-ytdlp-pot-provider/server
+
+# Install provider dependencies
+RUN deno install --allow-scripts=npm:canvas --frozen
+
+WORKDIR /app
+
 # Copy application
 COPY . .
 
-# Create download directory
 RUN mkdir -p downloads
 
-# Verify required tools
+# Verify installations
 RUN deno --version
 RUN ffmpeg -version
-
-# Verify yt-dlp and PO token provider
 RUN python -m yt_dlp --version
 
-CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Start both the PO-token provider and FastAPI
+CMD ["sh", "-c", "deno run --allow-env --allow-net --allow-ffi=. --allow-read=. /opt/bgutil-ytdlp-pot-provider/server/src/main.ts --host 127.0.0.1 --port 4416 & uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
