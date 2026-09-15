@@ -69,11 +69,16 @@ def get_playlist_info(url):
 
 def download_audio(url, amount, output_dir):
     """
-    Download audio as MP3.
+    Download audio as MP3 using yt-dlp and Deno.
     """
 
     ydl_opts = {
         "format": "bestaudio/best",
+
+        # Explicitly tell yt-dlp to use Deno for YouTube JavaScript.
+        "js_runtimes": {
+            "deno": {}
+        },
 
         "postprocessors": [
             {
@@ -85,18 +90,33 @@ def download_audio(url, amount, output_dir):
 
         "outtmpl": os.path.join(
             output_dir,
-            "%(title)s.%(ext)s"
+            "%(playlist_index)s - %(title)s.%(ext)s"
         ),
 
         "noplaylist": False,
 
-        "ignoreerrors": True,
+        # Don't hide the actual YouTube/yt-dlp error.
+        "ignoreerrors": False,
 
         "quiet": False,
 
         "no_warnings": False,
+
+        "verbose": True,
     }
 
+    if amount:
+        ydl_opts["playlistend"] = amount
+
+    print("========================================")
+    print("Starting yt-dlp download")
+    print(f"URL: {url}")
+    print(f"Amount: {amount}")
+    print(f"Output: {output_dir}")
+    print("========================================")
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([url])
     if amount:
         ydl_opts["playlistend"] = amount
 
