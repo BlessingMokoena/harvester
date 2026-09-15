@@ -1,7 +1,11 @@
 from fastapi import FastAPI, Form
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 import yt_dlp
 import os
+import shutil
+import tempfile
+import uuid
+import zipfile
 
 app = FastAPI(title="YouTube Audio Harvester")
 
@@ -11,6 +15,11 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
 def get_playlist_info(url):
+    """
+    Inspect a YouTube URL without downloading anything.
+    Returns title, count and playlist status.
+    """
+
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
@@ -24,313 +33,606 @@ def get_playlist_info(url):
             info = ydl.extract_info(url, download=False)
 
         if not info:
-            return None
-
-        if info.get("entries") is None:
             return {
-                "title": info.get("title", "Single Song"),
-                "count": 1,
+                "title": "Unknown",
+                "count": 0,
                 "is_playlist": False,
             }
 
-        entries = [
-            entry
-            for entry in info.get("entries", [])
-            if entry is not None
-        ]
+        entries = info.get("entries")
+
+        if entries:
+            entries = [entry for entry in entries if entry]
+
+            return {
+                "title": info.get("title", "YouTube Playlist"),
+                "count": len(entries),
+                "is_playlist": True,
+            }
 
         return {
-            "title": info.get("title", "YouTube Playlist"),
-            "count": len(entries),
-            "is_playlist": True,
+            "title": info.get("title", "YouTube Video"),
+            "count": 1,
+            "is_playlist": False,
         }
 
     except Exception as e:
-        print(f"Could not read playlist: {e}")
-        return None
+        print(f"Inspection error: {e}")
+
+        return {
+            "title": "Unable to inspect URL",
+            "count": 0,
+            "is_playlist": False,
+            "error": str(e),
+        }
 
 
-def download_audio(url, amount):
+def download_audio(url, amount, output_dir):
+    """
+    Download audio as MP3.
+    """
+
     ydl_opts = {
         "format": "bestaudio/best",
+
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",
+                "preferredquality": "192",
             }
         ],
+
         "outtmpl": os.path.join(
-            DOWNLOAD_DIR,
+            output_dir,
             "%(title)s.%(ext)s"
         ),
+
         "noplaylist": False,
-        "playlistend": amount,
+
         "ignoreerrors": True,
+
+        "quiet": False,
+
+        "no_warnings": False,
     }
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+    if amount:
+        ydl_opts["playlistend"] = amount
 
-        return True
-
-    except Exception as e:
-        print(f"Download error: {e}")
-        return False
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([url])
 
 
 @app.get("/", response_class=HTMLResponse)
 def home():
+
     return """
 <!DOCTYPE html>
-<html>
+
+<html lang="en">
+
 <head>
-    <meta charset="UTF-8">
-    <title>YouTube Audio Harvester</title>
 
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #111;
-            color: white;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-        }
+<meta charset="UTF-8">
 
-        .container {
-            width: 90%;
-            max-width: 700px;
-            background: #1c1c1c;
-            padding: 40px;
-            border-radius: 18px;
-            box-shadow: 0 0 30px rgba(0,0,0,.5);
-        }
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0">
 
-        h1 {
-            text-align: center;
-            margin-bottom: 10px;
-        }
+<title>YouTube Audio Harvester</title>
 
-        .subtitle {
-            text-align: center;
-            color: #aaa;
-            margin-bottom: 30px;
-        }
+<style>
 
-        input {
-            width: 100%;
-            box-sizing: border-box;
-            padding: 15px;
-            border-radius: 10px;
-            border: 1px solid #444;
-            background: #111;
-            color: white;
-            font-size: 16px;
-        }
+* {
+    box-sizing: border-box;
+}
 
-        button {
-            width: 100%;
-            margin-top: 15px;
-            padding: 15px;
-            border: none;
-            border-radius: 10px;
-            background: #e62117;
-            color: white;
-            font-size: 17px;
-            cursor: pointer;
-        }
+body {
+    margin: 0;
+    min-height: 100vh;
 
-        button:hover {
-            opacity: .9;
-        }
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
 
-        #result {
-            margin-top: 25px;
-            padding: 20px;
-            border-radius: 10px;
-            background: #252525;
-            display: none;
-        }
+    background:
+        linear-gradient(
+            135deg,
+            #111827,
+            #1e293b
+        );
 
-        .download {
-            background: #168a45;
-        }
+    color: white;
 
-        .error {
-            color: #ff6b6b;
-        }
-    </style>
+    display: flex;
+    justify-content: center;
+    align-items: center;
+
+    padding: 20px;
+}
+
+.container {
+
+    width: 100%;
+    max-width: 700px;
+
+    background: rgba(255,255,255,0.08);
+
+    border: 1px solid
+        rgba(255,255,255,0.15);
+
+    border-radius: 20px;
+
+    padding: 35px;
+
+    box-shadow:
+        0 20px 60px
+        rgba(0,0,0,0.4);
+
+    backdrop-filter: blur(15px);
+}
+
+h1 {
+    text-align: center;
+    margin-top: 0;
+}
+
+.subtitle {
+    text-align: center;
+    color: #cbd5e1;
+    margin-bottom: 30px;
+}
+
+label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: bold;
+}
+
+input {
+
+    width: 100%;
+
+    padding: 14px;
+
+    border-radius: 10px;
+
+    border: 1px solid
+        rgba(255,255,255,0.2);
+
+    background: rgba(0,0,0,0.3);
+
+    color: white;
+
+    font-size: 16px;
+
+    margin-bottom: 15px;
+}
+
+button {
+
+    width: 100%;
+
+    padding: 14px;
+
+    border: none;
+
+    border-radius: 10px;
+
+    background: #2563eb;
+
+    color: white;
+
+    font-size: 16px;
+
+    font-weight: bold;
+
+    cursor: pointer;
+
+    transition: 0.2s;
+}
+
+button:hover {
+    background: #1d4ed8;
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+#result {
+
+    margin-top: 25px;
+
+    padding: 20px;
+
+    border-radius: 12px;
+
+    background:
+        rgba(0,0,0,0.25);
+
+    display: none;
+}
+
+.status {
+
+    margin-top: 15px;
+
+    color: #cbd5e1;
+
+    text-align: center;
+}
+
+.download-section {
+
+    margin-top: 20px;
+}
+
+.download-section input {
+    margin-top: 10px;
+}
+
+.success {
+    color: #4ade80;
+}
+
+.error {
+    color: #f87171;
+}
+
+.info {
+    color: #60a5fa;
+}
+
+</style>
+
 </head>
 
 <body>
 
 <div class="container">
 
-    <h1>🎵 YouTube Audio Harvester</h1>
+<h1>🎵 YouTube Audio Harvester</h1>
 
-    <div class="subtitle">
-        Download YouTube songs and playlists as MP3
-    </div>
+<p class="subtitle">
+Download YouTube videos as high-quality MP3 audio
+</p>
 
-    <input
-        id="url"
-        type="text"
-        placeholder="Paste YouTube URL here..."
-    >
+<label>
+YouTube URL
+</label>
 
-    <button onclick="inspect()">
-        Inspect URL
-    </button>
+<input
+    id="url"
+    type="text"
+    placeholder="Paste YouTube URL here..."
+>
 
-    <div id="result"></div>
+<button
+    id="inspectButton"
+    onclick="inspectURL()"
+>
+Inspect URL
+</button>
+
+<div id="result"></div>
 
 </div>
 
 <script>
 
-async function inspect() {
+let currentInfo = null;
 
-    const url = document.getElementById("url").value.trim();
-    const result = document.getElementById("result");
+
+async function inspectURL() {
+
+    const url =
+        document.getElementById("url").value.trim();
+
+    const result =
+        document.getElementById("result");
+
+    const button =
+        document.getElementById("inspectButton");
+
 
     if (!url) {
-        alert("Please enter a YouTube URL.");
+
+        result.style.display = "block";
+
+        result.innerHTML =
+            '<div class="error">Please enter a YouTube URL.</div>';
+
         return;
     }
 
+
+    button.disabled = true;
+
     result.style.display = "block";
-    result.innerHTML = "⏳ Inspecting YouTube URL...";
+
+    result.innerHTML =
+        '<div class="info">⏳ Inspecting YouTube URL...</div>';
+
 
     try {
 
-        const response = await fetch(
-            "/inspect?url=" + encodeURIComponent(url)
-        );
+        const response =
+            await fetch(
+                "/inspect?url=" +
+                encodeURIComponent(url)
+            );
 
-        const data = await response.json();
 
-        if (!data.success) {
-            result.innerHTML =
-                '<div class="error">' +
-                data.message +
-                '</div>';
+        const data =
+            await response.json();
 
-            return;
+
+        if (data.error) {
+
+            throw new Error(data.error);
+
         }
 
-        if (!data.is_playlist) {
+
+        currentInfo = data;
+
+
+        if (data.is_playlist) {
 
             result.innerHTML = `
-                <h3>${data.title}</h3>
 
-                <p>This is a single song.</p>
+                <h3>📋 Playlist detected</h3>
 
-                <button
-                    class="download"
-                    onclick="downloadSongs(1)">
-                    Download Song
-                </button>
-            `;
-
-        } else {
-
-            result.innerHTML = `
-                <h3>${data.title}</h3>
+                <p>
+                    <strong>${escapeHtml(data.title)}</strong>
+                </p>
 
                 <p>
                     Songs available:
                     <strong>${data.count}</strong>
                 </p>
 
-                <input
-                    id="amount"
-                    type="number"
-                    min="1"
-                    max="${data.count}"
-                    value="${data.count}"
-                >
+                <div class="download-section">
 
-                <button
-                    class="download"
-                    onclick="downloadSongs(
-                        document.getElementById('amount').value
-                    )">
-                    Download Songs
-                </button>
-            `;
-        }
+                    <label>
+                        Number of songs
+                    </label>
 
-    } catch (error) {
+                    <input
+                        id="amount"
+                        type="number"
+                        min="1"
+                        max="${data.count}"
+                        value="${data.count}"
+                    >
 
-        result.innerHTML =
-            '<div class="error">' +
-            'Could not connect to the server.' +
-            '</div>';
-    }
-}
+                    <button
+                        onclick="downloadSongs()"
+                    >
+                        ⬇️ Download Songs
+                    </button>
 
+                </div>
 
-async function downloadSongs(amount) {
-
-    const url = document.getElementById("url").value.trim();
-    const result = document.getElementById("result");
-
-    result.innerHTML =
-        "⏳ Downloading... Please keep this page open.";
-
-    try {
-
-        const response = await fetch("/download", {
-
-            method: "POST",
-
-            headers: {
-                "Content-Type":
-                    "application/x-www-form-urlencoded"
-            },
-
-            body:
-                "url=" + encodeURIComponent(url) +
-                "&amount=" + encodeURIComponent(amount)
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-
-            result.innerHTML = `
-                <h3>✅ Download complete</h3>
-
-                <p>
-                    Your MP3 files have been saved in:
-                </p>
-
-                <strong>downloads</strong>
+                <div
+                    id="downloadStatus"
+                    class="status"
+                ></div>
             `;
 
         } else {
 
-            result.innerHTML =
-                '<div class="error">' +
-                data.message +
-                '</div>';
+            result.innerHTML = `
+
+                <h3>🎵 Song detected</h3>
+
+                <p>
+                    <strong>${escapeHtml(data.title)}</strong>
+                </p>
+
+                <button
+                    onclick="downloadSongs()"
+                >
+                    ⬇️ Download Song
+                </button>
+
+                <div
+                    id="downloadStatus"
+                    class="status"
+                ></div>
+            `;
         }
 
     } catch (error) {
 
         result.innerHTML =
             '<div class="error">' +
-            'Download failed.' +
+            '❌ ' +
+            escapeHtml(error.message) +
             '</div>';
+
+    } finally {
+
+        button.disabled = false;
+
     }
+}
+
+
+async function downloadSongs() {
+
+    const url =
+        document.getElementById("url").value.trim();
+
+
+    let amount = 1;
+
+
+    if (currentInfo && currentInfo.is_playlist) {
+
+        amount =
+            parseInt(
+                document.getElementById("amount").value
+            );
+
+
+        if (
+            !amount ||
+            amount < 1 ||
+            amount > currentInfo.count
+        ) {
+
+            alert(
+                "Please enter a valid number of songs."
+            );
+
+            return;
+        }
+    }
+
+
+    const status =
+        document.getElementById("downloadStatus");
+
+
+    status.className = "status info";
+
+    status.innerHTML =
+        "⏳ Preparing your download...";
+
+
+    try {
+
+        const response =
+            await fetch("/download", {
+
+                method: "POST",
+
+                headers: {
+                    "Content-Type":
+                        "application/x-www-form-urlencoded"
+                },
+
+                body:
+                    "url=" +
+                    encodeURIComponent(url) +
+                    "&amount=" +
+                    encodeURIComponent(amount)
+            });
+
+
+        if (!response.ok) {
+
+            let message =
+                "Download failed.";
+
+            try {
+
+                const error =
+                    await response.json();
+
+                if (error.detail) {
+                    message = error.detail;
+                }
+
+            } catch (_) {}
+
+            throw new Error(message);
+        }
+
+
+        const blob =
+            await response.blob();
+
+
+        const downloadURL =
+            window.URL.createObjectURL(blob);
+
+
+        const link =
+            document.createElement("a");
+
+
+        link.href = downloadURL;
+
+
+        const disposition =
+            response.headers.get(
+                "Content-Disposition"
+            );
+
+
+        let filename =
+            currentInfo &&
+            currentInfo.is_playlist
+                ? "harvester-download.zip"
+                : "harvested-song.mp3";
+
+
+        if (disposition) {
+
+            const match =
+                disposition.match(
+                    /filename="?([^"]+)"?/
+                );
+
+            if (match) {
+                filename = match[1];
+            }
+        }
+
+
+        link.download = filename;
+
+
+        document.body.appendChild(link);
+
+        link.click();
+
+        link.remove();
+
+
+        window.URL.revokeObjectURL(
+            downloadURL
+        );
+
+
+        status.className =
+            "status success";
+
+        status.innerHTML =
+            "✅ Download started! Check your browser's Downloads folder.";
+
+    } catch (error) {
+
+        status.className =
+            "status error";
+
+        status.innerHTML =
+            "❌ " +
+            escapeHtml(error.message);
+    }
+}
+
+
+function escapeHtml(text) {
+
+    const div =
+        document.createElement("div");
+
+    div.textContent =
+        text || "";
+
+    return div.innerHTML;
 }
 
 </script>
 
 </body>
+
 </html>
 """
 
@@ -338,39 +640,132 @@ async function downloadSongs(amount) {
 @app.get("/inspect")
 def inspect(url: str):
 
-    info = get_playlist_info(url)
+    result = get_playlist_info(url)
 
-    if not info:
-        return {
-            "success": False,
-            "message": "Unable to read this YouTube URL."
-        }
-
-    return {
-        "success": True,
-        "title": info["title"],
-        "count": info["count"],
-        "is_playlist": info["is_playlist"],
-    }
+    return JSONResponse(result)
 
 
 @app.post("/download")
-def download(url: str = Form(...), amount: int = Form(...)):
+def download(
+    url: str = Form(...),
+    amount: int = Form(...)
+):
 
-    if amount < 1:
-        return {
-            "success": False,
-            "message": "Invalid number of songs."
-        }
+    temp_dir = os.path.join(
+        DOWNLOAD_DIR,
+        str(uuid.uuid4())
+    )
 
-    success = download_audio(url, amount)
+    os.makedirs(
+        temp_dir,
+        exist_ok=True
+    )
 
-    if success:
-        return {
-            "success": True
-        }
+    try:
 
-    return {
-        "success": False,
-        "message": "The download failed."
-    }
+        print(
+            f"Starting download: {url}"
+        )
+
+        print(
+            f"Requested amount: {amount}"
+        )
+
+
+        download_audio(
+            url,
+            amount,
+            temp_dir
+        )
+
+
+        files = []
+
+        for root, dirs, filenames in os.walk(temp_dir):
+
+            for filename in filenames:
+
+                filepath = os.path.join(
+                    root,
+                    filename
+                )
+
+                if os.path.isfile(filepath):
+
+                    files.append(filepath)
+
+
+        if not files:
+
+            raise Exception(
+                "No audio files were downloaded."
+            )
+
+
+        # SINGLE SONG
+
+        if len(files) == 1:
+
+            file_path = files[0]
+
+            filename = os.path.basename(file_path)
+
+            return FileResponse(
+                path=file_path,
+                media_type="audio/mpeg",
+                filename=filename,
+                background=None
+            )
+
+
+        # MULTIPLE SONGS
+
+        zip_name = os.path.join(
+            DOWNLOAD_DIR,
+            f"harvester_{uuid.uuid4().hex}.zip"
+        )
+
+
+        with zipfile.ZipFile(
+            zip_name,
+            "w",
+            zipfile.ZIP_DEFLATED
+        ) as zip_file:
+
+            for file_path in files:
+
+                zip_file.write(
+                    file_path,
+                    arcname=os.path.basename(
+                        file_path
+                    )
+                )
+
+
+        shutil.rmtree(
+            temp_dir,
+            ignore_errors=True
+        )
+
+
+        return FileResponse(
+            path=zip_name,
+            media_type="application/zip",
+            filename="harvester-download.zip"
+        )
+
+
+    except Exception as e:
+
+        print(
+            f"Download error: {e}"
+        )
+
+        shutil.rmtree(
+            temp_dir,
+            ignore_errors=True
+        )
+
+        raise Exception(
+            f"Download failed: {str(e)}"
+        )
