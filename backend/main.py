@@ -120,6 +120,10 @@ def download_audio(url, amount, output_dir):
     print(f"Amount: {amount}")
     print(f"Output: {output_dir}")
     print("========================================")
+    
+    print("========== YT-DLP CONFIG ==========")
+    print(ydl_opts)
+    print("===================================")
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
