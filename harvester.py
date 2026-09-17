@@ -35,7 +35,7 @@ def get_playlist_info(url):
 
         return {
             'title': info.get('title', 'YouTube Playlist'),
-            'count': len(entries),
+             'count': len(entries),
             'is_playlist': True
         }
 
