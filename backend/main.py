@@ -13,20 +13,75 @@ DOWNLOAD_DIR = "downloads"
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+def get_ytdlp_base_options():
+    """
+    Common yt-dlp configuration for Harvester.
+    Authentication is added separately depending on environment.
+    """
+
+    return {
+        "format": "bestaudio/best",
+
+        # YouTube JavaScript runtime
+        "js_runtimes": {
+            "deno": {}
+        },
+
+        # yt-dlp's JavaScript challenge solver
+        "remote_components": ["ejs:github"],
+
+        # YouTube PO-token provider
+        "extractor_args": {
+            "youtubepot-bgutilhttp": {
+                "base_url": "http://127.0.0.1:4416"
+            }
+        },
+
+        "quiet": False,
+        "no_warnings": False,
+    }
+
+
+def add_authentication(ydl_opts):
+    """
+    Authentication strategy:
+
+    LOCAL:
+        Use the logged-in Firefox YouTube session.
+
+    RENDER:
+        Use the YouTube cookie file mounted as a Render Secret File.
+    """
+
+    render_cookie_file = "/etc/secrets/youtube_cookies.txt"
+
+    if os.path.exists(render_cookie_file):
+        print("🔐 Authentication: Render YouTube cookie file")
+        ydl_opts["cookiefile"] = render_cookie_file
+    else:
+        print("🔐 Authentication: Local Firefox browser cookies")
+        ydl_opts["cookiesfrombrowser"] = ("firefox",)
+
+    return ydl_opts
+
 
 def get_playlist_info(url):
     """
     Inspect a YouTube URL without downloading anything.
-    Returns title, count and playlist status.
+    Uses the authenticated Firefox session locally.
     """
 
-    ydl_opts = {
+    ydl_opts = get_ytdlp_base_options()
+
+    ydl_opts.update({
         "quiet": True,
-        "no_warnings": True,
+        "no_warnings": False,
         "extract_flat": True,
         "skip_download": True,
         "ignoreerrors": True,
-    }
+    })
+
+    add_authentication(ydl_opts)
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -69,23 +124,12 @@ def get_playlist_info(url):
 
 def download_audio(url, amount, output_dir):
     """
-    Download audio as MP3 using yt-dlp and Deno.
+    Download YouTube audio as MP3.
     """
 
-    ydl_opts = {
-        "format": "bestaudio/best",
+    ydl_opts = get_ytdlp_base_options()
 
-        # Explicitly tell yt-dlp to use Deno for YouTube JavaScript.
-        "js_runtimes": {
-            "deno": {}
-        },
-
-        "extractor_args": {
-            "youtubepot-bgutilhttp": {
-                "base_url": "http://127.0.0.1:4416"
-        }
-},
-
+    ydl_opts.update({
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -101,7 +145,6 @@ def download_audio(url, amount, output_dir):
 
         "noplaylist": False,
 
-        # Don't hide the actual YouTube/yt-dlp error.
         "ignoreerrors": False,
 
         "quiet": False,
@@ -109,7 +152,9 @@ def download_audio(url, amount, output_dir):
         "no_warnings": False,
 
         "verbose": True,
-    }
+    })
+
+    add_authentication(ydl_opts)
 
     if amount:
         ydl_opts["playlistend"] = amount
@@ -120,15 +165,17 @@ def download_audio(url, amount, output_dir):
     print(f"Amount: {amount}")
     print(f"Output: {output_dir}")
     print("========================================")
-    
-    print("========== YT-DLP CONFIG ==========")
-    print(ydl_opts)
-    print("===================================")
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
-    if amount:
-        ydl_opts["playlistend"] = amount
+    print("========== YT-DLP CONFIG ==========")
+
+    safe_config = dict(ydl_opts)
+
+    # Never print authentication information
+    safe_config.pop("cookiesfrombrowser", None)
+
+    print(safe_config)
+
+    print("===================================")
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
