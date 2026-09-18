@@ -2,4 +2,4 @@ fastapi
 uvicorn[standard]
 yt-dlp
 python-multipart
-bgutil-ytdlp-pot-provider
+bgutil-ytdlp-pot-provider==2.0.0

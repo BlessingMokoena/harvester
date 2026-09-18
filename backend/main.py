@@ -50,20 +50,20 @@ def add_authentication(ydl_opts):
         Use the logged-in Firefox YouTube session.
 
     RENDER:
-        Use the YouTube cookie file mounted as a Render Secret File.
+        Use a YouTube cookie file mounted as a Render Secret File.
     """
 
     render_cookie_file = "/etc/secrets/youtube_cookies.txt"
 
     if os.path.exists(render_cookie_file):
-        print("🔐 Authentication: Render YouTube cookie file")
+        print("Authentication: Render cookie file")
+
         ydl_opts["cookiefile"] = render_cookie_file
+
     else:
-        print("🔐 Authentication: Local Firefox browser cookies")
+        print("Authentication: Local Firefox browser cookies")
+
         ydl_opts["cookiesfrombrowser"] = ("firefox",)
-
-    return ydl_opts
-
 
 def get_playlist_info(url):
     """
@@ -727,39 +727,28 @@ def download(
     url: str = Form(...),
     amount: int = Form(...)
 ):
-
     temp_dir = os.path.join(
         DOWNLOAD_DIR,
         str(uuid.uuid4())
     )
 
-    os.makedirs(
-        temp_dir,
-        exist_ok=True
-    )
+    os.makedirs(temp_dir, exist_ok=True)
 
     try:
+        print(f"Starting download: {url}")
+        print(f"Requested amount: {amount}")
 
-        print(
-            f"Starting download: {url}"
-        )
-
-        print(
-            f"Requested amount: {amount}"
-        )
-
-
+        # Download the requested audio files
         download_audio(
             url,
             amount,
             temp_dir
         )
 
-
+        # Find downloaded files
         files = []
 
         for root, dirs, filenames in os.walk(temp_dir):
-
             for filename in filenames:
 
                 filepath = os.path.join(
@@ -768,62 +757,106 @@ def download(
                 )
 
                 if os.path.isfile(filepath):
-
                     files.append(filepath)
 
-
         if not files:
-
             raise Exception(
                 "No audio files were downloaded."
             )
 
+        print(f"Downloaded files: {len(files)}")
 
+        # -------------------------------------------------
         # SINGLE SONG
+        # -------------------------------------------------
 
-        if len(files) == 1:
-
-            file_path = files[0]
-
-            filename = os.path.basename(file_path)
-
-            return FileResponse(
-                path=file_path,
-                media_type="audio/mpeg",
-                filename=filename,
-                background=None
-            )
-
-
+        
+        # -------------------------------------------------
         # MULTIPLE SONGS
+        # -------------------------------------------------
 
         zip_name = os.path.join(
             DOWNLOAD_DIR,
             f"harvester_{uuid.uuid4().hex}.zip"
         )
 
+        print(f"Creating ZIP: {zip_name}")
 
+        # IMPORTANT:
+        # The 'with' block completely closes/finalizes
+        # the ZIP before FileResponse starts sending it.
         with zipfile.ZipFile(
             zip_name,
-            "w",
-            zipfile.ZIP_DEFLATED
+            mode="w",
+            compression=zipfile.ZIP_DEFLATED
         ) as zip_file:
 
             for file_path in files:
 
+                arcname = os.path.basename(file_path)
+
+                print(f"Adding to ZIP: {arcname}")
+
                 zip_file.write(
                     file_path,
-                    arcname=os.path.basename(
-                        file_path
-                    )
+                    arcname=arcname
                 )
 
+        # -------------------------------------------------
+        # VERIFY ZIP BEFORE SENDING
+        # -------------------------------------------------
+
+        print("Verifying ZIP...")
+
+        if not os.path.exists(zip_name):
+            raise Exception(
+                "ZIP file was not created."
+            )
+
+        zip_size = os.path.getsize(zip_name)
+
+        print(
+            f"ZIP created successfully: "
+            f"{zip_size} bytes"
+        )
+
+        if zip_size == 0:
+            raise Exception(
+                "ZIP file is empty."
+            )
+
+        # Test the ZIP integrity
+        with zipfile.ZipFile(zip_name, "r") as test_zip:
+
+            bad_file = test_zip.testzip()
+
+            if bad_file is not None:
+                raise Exception(
+                    f"ZIP verification failed. "
+                    f"Corrupt file: {bad_file}"
+                )
+
+            print(
+                f"ZIP verification successful. "
+                f"Contains {len(test_zip.namelist())} files."
+            )
+
+        # -------------------------------------------------
+        # CLEAN TEMP DOWNLOAD DIRECTORY
+        # -------------------------------------------------
 
         shutil.rmtree(
             temp_dir,
             ignore_errors=True
         )
 
+        print("Temporary download directory removed.")
+
+        # -------------------------------------------------
+        # RETURN ZIP
+        # -------------------------------------------------
+
+        print("Sending ZIP to browser...")
 
         return FileResponse(
             path=zip_name,
@@ -831,12 +864,9 @@ def download(
             filename="harvester-download.zip"
         )
 
-
     except Exception as e:
 
-        print(
-            f"Download error: {e}"
-        )
+        print(f"Download error: {e}")
 
         shutil.rmtree(
             temp_dir,
@@ -846,3 +876,4 @@ def download(
         raise Exception(
             f"Download failed: {str(e)}"
         )
+
