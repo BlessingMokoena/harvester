@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     curl \
     git \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # --------------------------------------------------
