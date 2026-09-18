@@ -54,11 +54,14 @@ def add_authentication(ydl_opts):
     """
 
     render_cookie_file = "/etc/secrets/youtube_cookies.txt"
+    local_cookie_file = "/tmp/youtube_cookies.txt"
 
     if os.path.exists(render_cookie_file):
         print("Authentication: Render cookie file")
 
-        ydl_opts["cookiefile"] = render_cookie_file
+        shutil.copyfile(render_cookie_file, local_cookie_file)
+
+        ydl_opts["cookiefile"] = local_cookie_file
 
     else:
         print("Authentication: Local Firefox browser cookies")
